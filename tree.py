@@ -20,7 +20,7 @@ class Tree(object):
         self.leaf_node = None
 
     def calc_predict_value(self, dataset):
-        if self.leaf_node:
+        if self.leaf_node is not None:
             return self.leaf_node
         elif dataset[self.best_split_feature] <= self.best_split_value:
             return self.tree_left.calc_predict_value(dataset)
@@ -81,7 +81,7 @@ class BaseDecisionTree(object):
             return tree
 
         if depth < self.max_depth:
-            print(str(depth).center(20, '='))
+            # print(str(depth).center(20, '='))
             best_split_feature, best_split_value = self.choose_best_feature(dataset, targets)
             left_dataset, right_dataset, left_targets, right_targets = \
                 self.split_dataset(dataset, targets, best_split_feature, best_split_value)
@@ -132,20 +132,20 @@ class BaseDecisionTree(object):
         return leaf_value
 
     def calc_split_gain(self, left_targets, right_targets):
-        grad_left = left_targets['grad'].sum()
-        hess_left = left_targets['hess'].sum()
-        grad_right = right_targets['grad'].sum()
-        hess_right = right_targets['hess'].sum()
-        split_gain = 0.5 * (grad_left ** 2 / (hess_left + self.reg_lambda) +
-                            grad_right ** 2 / (hess_right + self.reg_lambda) -
-                            (grad_left + grad_right) ** 2 / (hess_left + hess_right + self.reg_lambda)) - self.reg_gamma
+        left_grad = left_targets['grad'].sum()
+        left_hess = left_targets['hess'].sum()
+        right_grad = right_targets['grad'].sum()
+        right_hess = right_targets['hess'].sum()
+        split_gain = 0.5 * (left_grad ** 2 / (left_hess + self.reg_lambda) +
+                            right_grad ** 2 / (right_hess + self.reg_lambda) -
+                            (left_grad + right_grad) ** 2 / (left_hess + right_hess + self.reg_lambda)) - self.reg_gamma
         return split_gain
 
     @staticmethod
     def split_dataset(dataset, targets, split_feature, split_value):
         left_dataset = dataset[dataset[split_feature] <= split_value]
-        right_dataset = dataset[dataset[split_feature] > split_value]
         left_targets = targets[dataset[split_feature] <= split_value]
+        right_dataset = dataset[dataset[split_feature] > split_value]
         right_targets = targets[dataset[split_feature] > split_value]
         return left_dataset, right_dataset, left_targets, right_targets
 
