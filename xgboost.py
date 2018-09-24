@@ -51,7 +51,7 @@ class SquareLoss(BaseLoss):
 
 class LogisticLoss(BaseLoss):
     """
-    L = log(1 + exp(-label*pred)), label={1, -1}
+    L = log(1 + exp(-label*pred))
     """
     def grad(self, targets):
         pred = 1.0 / (1.0 + exp(- targets['pred']))

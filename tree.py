@@ -30,7 +30,7 @@ class Tree(object):
         else:
             return self.tree_right.calc_predict_value(dataset)
 
-    # print tree structure by JSON
+    # print tree structure by JSON format
     def describe_tree(self):
         if not self.tree_left and not self.tree_right:
             leaf_info = "{leaf_value:" + str(self.leaf_value) + "}"
