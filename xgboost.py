@@ -1,3 +1,4 @@
+#!/usr/local/bin/python
 # -*- coding: utf-8 -*-
 """
 @Time: 2018/8/4 下午5:36
@@ -5,10 +6,11 @@
 @Function：xgboost二分类，连续特征
 @Version: V1.2
 参考文献：
-[1] Tianqi Chen. XGBoost: A Scalable Tree Boosting System[D].KDD2016,2016.
-[2] 人工智能邂逅量化投资. XGBoost入门系列第一讲[DB/OL].https://zhuanlan.zhihu.com/p/27816315.
-[3] 红色石头Will. 简单的交叉熵损失函数，你真的懂了吗？[DB/OL].https://blog.csdn.net/red_stone1/article/details/80735068.
-[4] zhpmatrix. groot[DB/OL].https://github.com/zhpmatrix/groot.
+[1] Friedman JH. Greedy Function Approximation-A Gradient Boosting Machine[J].The Annals of Statistics,2001,29(5),1189-1232.
+[2] Tianqi Chen. XGBoost: A Scalable Tree Boosting System[D].KDD2016,2016.
+[3] 人工智能邂逅量化投资. XGBoost入门系列第一讲[DB/OL].https://zhuanlan.zhihu.com/p/27816315.
+[4] 红色石头Will. 简单的交叉熵损失函数，你真的懂了吗？[DB/OL].https://blog.csdn.net/red_stone1/article/details/80735068.
+[5] zhpmatrix. groot[DB/OL].https://github.com/zhpmatrix/groot.
 """
 from __future__ import division
 import pandas as pd
@@ -16,13 +18,12 @@ import numpy as np
 from math import exp, log
 from tree import BaseDecisionTree
 import random
-import warnings
-warnings.filterwarnings('ignore')
 pd.set_option('precision', 4)
 pd.set_option('display.max_rows', 50)
 pd.set_option('display.width', 1000)
 pd.set_option('display.max_columns', 1000)
 pd.set_option('expand_frame_repr', False)
+from sklearn import preprocessing
 
 
 class BaseLoss(object):
@@ -36,38 +37,43 @@ class BaseLoss(object):
         pass
 
 
-class SquareLoss(BaseLoss):
+class CrossEntropyLoss(BaseLoss):
     """
-    L = 0.5*(pred - label)**2
+    L = -[y*log(pred) + (1-y)*log(1-pred)], y={1, 0}
     """
+    @staticmethod
+    def calc_pred(targets):
+        pred = 1.0 / (1.0 + exp(- targets['pred']))
+        return pred
+
     def grad(self, targets):
-        grad = targets['pred'] - targets['label']
+        pred = self.calc_pred(targets)
+        grad = - targets['label'] / pred + (1 - targets['label']) / (1 - pred) * targets['class_weight']
         return grad
 
     def hess(self, targets):
-        hess = 1
+        pred = self.calc_pred(targets)
+        hess = targets['label'] / pred**2 + (1 - targets['label']) / (1 - pred)**2 * targets['class_weight']
         return hess
 
-
+# Not used.
 class LogisticLoss(BaseLoss):
     """
-    L = log(1 + exp(-label*pred))
+    L = ln(1+exp(-y*pred)), y={-1, 1}
     """
     def grad(self, targets):
-        pred = 1.0 / (1.0 + exp(- targets['pred']))
-        grad = - targets['label'] / (1 + exp(targets['label'] * pred))
+        grad = - targets['label'] / (1 + exp(targets['label'] * targets['pred'])) * targets['class_weight']
         return grad
 
     def hess(self, targets):
-        pred = 1.0 / (1.0 + exp(- targets['pred']))
-        hess = exp(targets['label'] * pred) / (1 + exp(targets['label'] * pred))**2
+        hess = exp(targets['label'] * targets['pred']) / (1 + exp(targets['label'] * targets['pred']))**2 * targets['class_weight']
         return hess
 
 
 class XGBClassifier(object):
     def __init__(self, n_estimators=100, max_depth=-1, num_leaves=-1, learning_rate=0.1, min_samples_split=2,
                  min_samples_leaf=1, subsample=1., colsample_bytree=1., max_bin=225, min_child_weight=1.,
-                 reg_gamma=0., reg_lambda=0., loss="logistic", random_state=None):
+                 reg_gamma=0., reg_lambda=0., is_unbalance=True, random_state=None):
         """Construct a xgboost model
 
         Parameters
@@ -96,8 +102,8 @@ class XGBClassifier(object):
             L1 regularization term on weights.
         reg_lambda : float, optional (default=0.)
             L2 regularization term on weights.
-        loss: loss object, (default="logistic")
-            logisticloss, squareloss
+        is_unbalance : bool, optional (default=True.)
+            Set this to ``True`` if training data are unbalance.
         random_state : int or None, optional (default=None)
             Random number seed.
         """
@@ -113,35 +119,33 @@ class XGBClassifier(object):
         self.min_child_weight = min_child_weight
         self.reg_gamma = reg_gamma
         self.reg_lambda = reg_lambda
-        self.loss = loss
+        self.is_unbalance = is_unbalance
         self.random_state = random_state
-        self.pred_0 = None
+        self.init_score = None
         self.trees = dict()
         self.feature_importances_ = dict()
+        self.loss = CrossEntropyLoss()
 
     def fit(self, dataset, targets):
-        if self.loss == "logistic":
-            self.loss = LogisticLoss()
-        elif self.loss == "squareloss":
-            self.loss = SquareLoss()
-        else:
-            raise ValueError("The loss function must be 'logistic' or 'squareloss'!")
-
+        assert targets.unique().__len__() == 2, "There must be two class for targets!"
         targets = targets.to_frame(name='label')
-        if targets['label'].unique().__len__() != 2:
-            raise ValueError("There must be two class for targets!")
-        if len([x for x in dataset.columns if dataset[x].dtype in ['int32', 'float32', 'int64', 'float64']]) \
-                != len(dataset.columns):
-            raise ValueError("The features dtype must be int or float!")
+        # transform labels into 0&1
+        targets['label'] = preprocessing.LabelEncoder().fit_transform(targets['label'])
 
         if self.random_state:
             random.seed(self.random_state)
-        random_state_stages = random.sample(range(max(self.n_estimators, len(targets))), self.n_estimators)
+        random_state_stages = random.sample(range(self.n_estimators), self.n_estimators)
 
-        # the first base function
-        mean = 1.0 * sum(targets['label']) / len(targets['label'])
-        self.pred_0 = 0.5 * log((1 + mean) / (1 - mean))
-        targets['pred'] = self.pred_0
+        if self.is_unbalance:
+            class_weight = dict(targets.groupby(['label']).size() * 1.0 / min(targets.groupby(['label']).size()))
+            class_weight = dict(zip(list(class_weight.keys()), list(class_weight.values())[::-1]))
+        else:
+            class_weight = dict(zip(targets['label'].unique(), [1, 1]))
+
+        # base score
+        self.init_score = log((1 + targets['label'].mean()) / (1 - targets['label'].mean()))
+        targets['class_weight'] = targets['label'].map(class_weight)
+        targets['pred'] = self.init_score
         targets['grad'] = targets.apply(self.loss.grad, axis=1)
         targets['hess'] = targets.apply(self.loss.hess, axis=1)
 
@@ -152,6 +156,8 @@ class XGBClassifier(object):
                                     self.reg_gamma, self.reg_lambda, random_state_stages[stage])
             tree.fit(dataset, targets)
             self.trees[stage] = tree
+            print(tree.print_tree())
+
             targets['pred'] = targets['pred'] + self.learning_rate * tree.pred
             targets['grad'] = targets.apply(self.loss.grad, axis=1)
             targets['hess'] = targets.apply(self.loss.hess, axis=1)
@@ -162,11 +168,11 @@ class XGBClassifier(object):
     def predict_proba(self, dataset):
         res = []
         for index, row in dataset.iterrows():
-            f_value = self.pred_0
+            score = self.init_score
             for stage, tree in self.trees.items():
-                f_value += self.learning_rate * tree.predict(row)
-            p_0 = 1.0 / (1 + exp(2 * f_value))
-            res.append([p_0, 1 - p_0])
+                score += self.learning_rate * tree.predict(row)
+            p_1 = 1.0 / (1 + exp(-score))
+            res.append([1 - p_1, p_1])
         return np.array(res)
 
     def predict(self, dataset):
@@ -191,11 +197,11 @@ if __name__ == '__main__':
                         min_child_weight=1,
                         reg_gamma=0.1,
                         reg_lambda=0.3,
-                        loss='logistic',
+                        is_unbalance=False,
                         random_state=66)
     train_count = int(0.7 * len(df))
     xgb.fit(df.ix[:train_count, :-1], df.ix[:train_count, 'Class'])
 
     from sklearn import metrics
-    print metrics.roc_auc_score(df.ix[:train_count, 'Class'], xgb.predict_proba(df.ix[:train_count, :-1])[:, 1])
-    print metrics.roc_auc_score(df.ix[train_count:, 'Class'], xgb.predict_proba(df.ix[train_count:, :-1])[:, 1])
+    print(metrics.roc_auc_score(df.ix[:train_count, 'Class'], xgb.predict_proba(df.ix[:train_count, :-1])[:, 1]))
+    print(metrics.roc_auc_score(df.ix[train_count:, 'Class'], xgb.predict_proba(df.ix[train_count:, :-1])[:, 1]))

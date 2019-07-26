@@ -108,7 +108,7 @@ class BaseDecisionTree(object):
             dataset_copy = dataset_copy.iloc[subset_index, :].reset_index(drop=True)
             targets_copy = targets_copy.iloc[subset_index, :].reset_index(drop=True)
         if self.colsample_bytree < 1.0:
-            subcol_index = random.sample(dataset_copy.columns, int(self.colsample_bytree*len(dataset_copy.columns)))
+            subcol_index = random.sample(dataset_copy.columns.tolist(), int(self.colsample_bytree*len(dataset_copy.columns)))
             dataset_copy = dataset_copy[subcol_index]
 
         self.tree = self._fit(dataset_copy, targets_copy, depth=0)
